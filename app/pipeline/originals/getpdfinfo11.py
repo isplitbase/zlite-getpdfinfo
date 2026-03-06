@@ -24,9 +24,35 @@ from typing import Any, Dict, List, Tuple
 
 import boto3
 from botocore.client import Config
-from google import genai
-from google.genai import types as genai_types
 from pdf2image import convert_from_path
+
+# NOTE:
+# This repository contains a local "/app/google" stub package for old Colab helpers.
+# It shadows the real "google-genai" package on Cloud Run, so we must import
+# google.genai only after temporarily removing the project root from sys.path.
+import importlib
+import sys
+
+_PROJECT_ROOT = str(Path(__file__).resolve().parents[3])
+_removed_sys_path = []
+for _p in list(sys.path):
+    if _p in ("", _PROJECT_ROOT, "/app"):
+        _removed_sys_path.append(_p)
+        try:
+            sys.path.remove(_p)
+        except ValueError:
+            pass
+
+_google_mod = sys.modules.get("google")
+if _google_mod is not None and str(getattr(_google_mod, "__file__", "")).startswith(_PROJECT_ROOT + "/google"):
+    del sys.modules["google"]
+
+genai = importlib.import_module("google.genai")
+genai_types = importlib.import_module("google.genai.types")
+
+for _p in reversed(_removed_sys_path):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 
 MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
