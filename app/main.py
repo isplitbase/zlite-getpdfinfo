@@ -1,10 +1,7 @@
-from fastapi import FastAPI, Body
+from fastapi import FastAPI, Body, HTTPException
 from typing import Any, Dict
+import traceback
 
-from app.pipeline.runner201 import run_colab201
-from app.pipeline.runner202 import run_colab202
-from app.pipeline.runner141 import run_html as run_html141
-from app.pipeline.runner142 import run_html as run_html142
 from app.pipeline.runner import run_getpdfinfo as run_getpdfinfo_pipeline
 
 app = FastAPI()
@@ -15,65 +12,82 @@ def health():
     return {"ok": True}
 
 
+def _is_getpdfinfo_payload(payload: Dict[str, Any]) -> bool:
+    files = payload.get("files") or payload.get("file")
+    if isinstance(files, str):
+        return files.startswith("s3://")
+    if isinstance(files, list) and len(files) > 0:
+        return all(isinstance(x, str) and x.startswith("s3://") for x in files)
+    return False
+
+
 @app.post("/v1/pipeline")
 def pipeline(payload: Dict[str, Any] = Body(...)):
     """
-    既存(201/202)と、CF計算書HTML出力(141/142)の両方に対応。
-    ※ 旧main.pyが途中で終わっていたので、201/202 分岐を補完。
+    zlite-getpdfinfo 用の統一エンドポイント。
 
-    ■ 201/202 入力例:
+    主用途:
       {
-        "data": [...],
-        "ai_case_id": 21160,
-        "loginkey": "...",
-        "mode": "201" | "202" | "both"   # 任意（省略時 both）
+        "files": [
+          "s3://zlite/xxx-1.pdf",
+          "s3://zlite/xxx-2.pdf",
+          "s3://zlite/xxx-3.pdf"
+        ]
       }
 
-    ■ 141/142 入力例:
-      {
-        "mode": "141" | "142" | "both",
-        "ai_case_id": 8888,
-        "url": "https://...signed xlsx...",
-        "s3_bucket": "zlite",
-        "s3_region": "ap-northeast-1"
-      }
-      ※ S3_ACCESS_KEY / S3_SECRET_KEY は環境変数で指定
+    互換:
+      {"file": "s3://zlite/xxx.pdf"}
     """
-    mode = str(payload.get("mode", "both")).lower()
+    try:
+        if _is_getpdfinfo_payload(payload):
+            return run_getpdfinfo_pipeline(payload)
 
-    # url がある場合は「HTML生成」モードとして扱う（201/202の互換性を壊さない）
-    if payload.get("url"):
-        if mode in ("141", "runner141"):
-            return {"result": run_html141(payload)}
-        if mode in ("142", "runner142"):
-            return {"result": run_html142(payload)}
-        return {"results": [run_html141(payload), run_html142(payload)]}
-
-    # それ以外は 201/202 として扱う
-    if mode in ("201", "runner201"):
-        return {"result": run_colab201(payload)}
-    if mode in ("202", "runner202"):
-        return {"result": run_colab202(payload)}
-
-    # both / default
-    return {"results": [run_colab201(payload), run_colab202(payload)]}
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": "payload.files に s3://... のPDF配列を指定してください。",
+                "example": {
+                    "files": [
+                        "s3://zlite/sample-1.pdf",
+                        "s3://zlite/sample-2.pdf"
+                    ]
+                }
+            }
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        tb = traceback.format_exc()
+        print("=== /v1/pipeline ERROR START ===")
+        print(tb)
+        print("payload =", payload)
+        print("=== /v1/pipeline ERROR END ===")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "message": str(e),
+                "traceback_tail": tb.splitlines()[-20:]
+            }
+        )
 
 
 @app.post("/v1/zlite-getpdfinfo")
 def zlite_getpdfinfo(payload: Dict[str, Any] = Body(...)):
     """
-    getpdfinfo11 相当（PDFメタ情報抽出）
-
-    入力例:
-      {
-        "files": [
-          "s3://zlite/21194-20260304135038-bnTSravHbU-1.pdf",
-          "s3://zlite/21194-20260304135038-bnTSravHbU-2.pdf",
-          "s3://zlite/21194-20260304135038-bnTSravHbU-3.pdf"
-        ]
-      }
-
-    出力:
-      getpdfinfo11 の financial_data.json 相当を payload.result_json として返します。
+    /v1/pipeline と同じく getpdfinfo11 を実行する専用エンドポイント。
     """
-    return run_getpdfinfo_pipeline(payload)
+    try:
+        return run_getpdfinfo_pipeline(payload)
+    except Exception as e:
+        tb = traceback.format_exc()
+        print("=== /v1/zlite-getpdfinfo ERROR START ===")
+        print(tb)
+        print("payload =", payload)
+        print("=== /v1/zlite-getpdfinfo ERROR END ===")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "message": str(e),
+                "traceback_tail": tb.splitlines()[-20:]
+            }
+        )

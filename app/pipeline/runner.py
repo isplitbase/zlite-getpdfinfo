@@ -6,8 +6,9 @@ import tempfile
 from pathlib import Path
 from typing import Any, Dict
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]  # ~/cash-ai-01
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 ORIGINALS_DIR = PROJECT_ROOT / "app" / "pipeline" / "originals"
+
 
 def _run(cmd: list[str], cwd: Path, env: Dict[str, str]) -> None:
     p = subprocess.run(
@@ -20,6 +21,7 @@ def _run(cmd: list[str], cwd: Path, env: Dict[str, str]) -> None:
     )
     if p.returncode != 0:
         raise RuntimeError(f"Command failed: {' '.join(cmd)}\n--- output ---\n{p.stdout}")
+
 
 def run_001_002_003(payload: Dict[str, Any]) -> Dict[str, Any]:
     data_json = {
@@ -37,7 +39,6 @@ def run_001_002_003(payload: Dict[str, Any]) -> Dict[str, Any]:
     if api_key:
         env["OPENAI_API_KEY2"] = api_key
 
-    # ★ここが重要：cash-ai-01 直下をPYTHONPATHに入れる（google/colabスタブを拾える）
     env["PYTHONPATH"] = str(PROJECT_ROOT)
 
     _run(["python3", str(ORIGINALS_DIR / "cloab001.py")], cwd=run_dir, env=env)
@@ -52,22 +53,40 @@ def run_001_002_003(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     return json.loads(out_path.read_text(encoding="utf-8"))
 
-# ============================================================
-# zlite-getpdfinfo (PDFメタ情報抽出) API
-# ============================================================
+
 def run_getpdfinfo(payload: Dict[str, Any]) -> Dict[str, Any]:
     """
     入力例:
       {"files": ["s3://zlite/...pdf", "s3://zlite/...pdf"]}
+      {"file": "s3://zlite/...pdf"}
+
     出力:
       {"result_json": {... financial_data.json 相当 ...}, ...}
     """
-    files = payload.get("files") or payload.get("file") or []
+    files = payload.get("files")
+    if files is None:
+        files = payload.get("file", [])
+
     if isinstance(files, str):
         files = [files]
+
     if not isinstance(files, list) or not files:
         raise ValueError("payload.files が未指定です")
 
-    # originals/getpdfinfo11.py のロジックを呼び出す
-    from app.pipeline.originals.getpdfinfo11 import run_getpdfinfo as _run
-    return _run(files)
+    normalized: list[str] = []
+    for i, f in enumerate(files):
+        if not isinstance(f, str):
+            raise ValueError(f"payload.files[{i}] が文字列ではありません: {f!r}")
+        f = f.strip()
+        if not f:
+            raise ValueError(f"payload.files[{i}] が空です")
+        if not f.startswith("s3://"):
+            raise ValueError(f"payload.files[{i}] は s3:// 形式ではありません: {f}")
+        normalized.append(f)
+
+    from app.pipeline.originals.getpdfinfo11 import run_getpdfinfo as _run_getpdfinfo_original
+
+    try:
+        return _run_getpdfinfo_original(normalized)
+    except Exception as e:
+        raise RuntimeError(f"getpdfinfo11 実行失敗: {e}") from e
