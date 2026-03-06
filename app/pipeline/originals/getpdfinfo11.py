@@ -493,6 +493,35 @@ def _replace_display_names_in_result(result: Dict[str, Any], display_name_map: D
 
     return result
 
+
+def _replace_display_names_in_period_mapping(period_mapping: List[Dict[str, Any]], display_name_map: Dict[str, str]) -> List[Dict[str, Any]]:
+    if not display_name_map:
+        return period_mapping
+    for p in period_mapping or []:
+        sf = p.get("source_file")
+        if isinstance(sf, str) and sf in display_name_map:
+            p["source_file"] = display_name_map[sf]
+    return period_mapping
+
+
+def _replace_display_names_in_logs(logs: List[Dict[str, str]], display_name_map: Dict[str, str]) -> List[Dict[str, str]]:
+    if not display_name_map:
+        return logs
+
+    # 長いキーを先に置換して誤置換を避ける
+    items = sorted(display_name_map.items(), key=lambda kv: len(kv[0]), reverse=True)
+
+    for log in logs or []:
+        msg = log.get("msg")
+        if not isinstance(msg, str):
+            continue
+        for s3_name, original_name in items:
+            # 拡張子なし / .pdf付き の両方を置換
+            msg = msg.replace(s3_name + ".pdf", original_name + ".pdf")
+            msg = msg.replace(s3_name, original_name)
+        log["msg"] = msg
+    return logs
+
 def run_getpdfinfo(files: List[str], file_names: List[str] | None = None) -> Dict[str, Any]:
     api_key = str(os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY") or "").strip()
     if not api_key:
@@ -548,12 +577,14 @@ def run_getpdfinfo(files: List[str], file_names: List[str] | None = None) -> Dic
 
     log("🔗 期ラベルのマッピングを構築中...")
     period_mapping = build_period_mapping(all_results)
+    period_mapping = _replace_display_names_in_period_mapping(period_mapping, display_name_map)
     for prd in period_mapping:
         log(f"   {prd['label']}: {prd['fiscal_end_date']} ({prd['source_file']})", "ok")
 
     log("📦 最終JSONを構築中...")
     final_json = build_final_json(all_results, period_mapping)
     final_json = _replace_display_names_in_result(final_json, display_name_map)
+    logs = _replace_display_names_in_logs(logs, display_name_map)
 
     # 互換のためファイルも保存（必要なら）
     out_dir = run_dir / "output" / "json"
