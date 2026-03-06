@@ -57,7 +57,7 @@ def run_001_002_003(payload: Dict[str, Any]) -> Dict[str, Any]:
 def run_getpdfinfo(payload: Dict[str, Any]) -> Dict[str, Any]:
     """
     入力例:
-      {"files": ["s3://zlite/...pdf", "s3://zlite/...pdf"]}
+      {"files": ["s3://zlite/...pdf", "s3://zlite/...pdf"], "file_names": ["a.pdf", "b.pdf"]}
       {"file": "s3://zlite/...pdf"}
 
     出力:
@@ -73,6 +73,17 @@ def run_getpdfinfo(payload: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(files, list) or not files:
         raise ValueError("payload.files が未指定です")
 
+    file_names = payload.get("file_names")
+    if file_names is None:
+        file_names = payload.get("filenames")
+
+    if file_names is None:
+        file_names = []
+    elif isinstance(file_names, str):
+        file_names = [file_names]
+    elif not isinstance(file_names, list):
+        raise ValueError("payload.file_names は配列で指定してください")
+
     normalized: list[str] = []
     for i, f in enumerate(files):
         if not isinstance(f, str):
@@ -84,9 +95,21 @@ def run_getpdfinfo(payload: Dict[str, Any]) -> Dict[str, Any]:
             raise ValueError(f"payload.files[{i}] は s3:// 形式ではありません: {f}")
         normalized.append(f)
 
+    normalized_names: list[str] = []
+    for i, name in enumerate(file_names):
+        if name is None:
+            normalized_names.append("")
+            continue
+        if not isinstance(name, str):
+            raise ValueError(f"payload.file_names[{i}] が文字列ではありません: {name!r}")
+        normalized_names.append(name)
+
+    if normalized_names and len(normalized_names) != len(normalized):
+        raise ValueError("payload.file_names の件数は payload.files と同じにしてください")
+
     from app.pipeline.originals.getpdfinfo11 import run_getpdfinfo as _run_getpdfinfo_original
 
     try:
-        return _run_getpdfinfo_original(normalized)
+        return _run_getpdfinfo_original(normalized, normalized_names)
     except Exception as e:
         raise RuntimeError(f"getpdfinfo11 実行失敗: {e}") from e

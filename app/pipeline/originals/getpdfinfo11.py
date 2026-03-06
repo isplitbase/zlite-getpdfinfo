@@ -437,7 +437,63 @@ def normalize_pdf_inplace(pdf_path: Path) -> None:
 # ────────────────────────────────
 # 外部向けエントリ：files(S3 URL) -> dict
 # ────────────────────────────────
-def run_getpdfinfo(files: List[str]) -> Dict[str, Any]:
+
+def _s3_display_name_from_url(url: str) -> str:
+    try:
+        _, key = _parse_s3_url(url)
+        return Path(key).name
+    except Exception:
+        return Path(url).name or url
+
+def _strip_pdf_suffix(name: str) -> str:
+    return name[:-4] if name.lower().endswith(".pdf") else name
+
+def _build_display_name_map(files: List[str], file_names: List[str] | None) -> Dict[str, str]:
+    """
+    S3保存名(拡張子なし) -> 元ファイル名(拡張子なし) の対応表を作る
+    例:
+      96-...-abc.pdf -> 元の決算書名
+    """
+    mapping: Dict[str, str] = {}
+    if not file_names:
+        return mapping
+
+    for i, s3_url in enumerate(files):
+        if i >= len(file_names):
+            break
+        original = (file_names[i] or "").strip()
+        if not original:
+            continue
+        s3_name = _s3_display_name_from_url(s3_url)
+        mapping[_strip_pdf_suffix(s3_name)] = _strip_pdf_suffix(Path(original).name)
+    return mapping
+
+def _replace_display_names_in_result(result: Dict[str, Any], display_name_map: Dict[str, str]) -> Dict[str, Any]:
+    """
+    output内の filename / source_file を S3保存名 から 元ファイル名へ置換する
+    """
+    if not display_name_map:
+        return result
+
+    metadata = result.get("metadata", {})
+    for p in metadata.get("fiscal_periods", []) or []:
+        sf = p.get("source_file")
+        if isinstance(sf, str) and sf in display_name_map:
+            p["source_file"] = display_name_map[sf]
+
+    for info in result.get("pdf_info", []) or []:
+        fn = info.get("filename")
+        if isinstance(fn, str) and fn in display_name_map:
+            info["filename"] = display_name_map[fn]
+
+        for p in info.get("periods", []) or []:
+            sf = p.get("source_file")
+            if isinstance(sf, str) and sf in display_name_map:
+                p["source_file"] = display_name_map[sf]
+
+    return result
+
+def run_getpdfinfo(files: List[str], file_names: List[str] | None = None) -> Dict[str, Any]:
     api_key = str(os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY") or "").strip()
     if not api_key:
         raise ValueError("Gemini APIキーが未指定です。環境変数 GEMINI_API_KEY を指定してください。")
@@ -449,6 +505,7 @@ def run_getpdfinfo(files: List[str]) -> Dict[str, Any]:
     in_dir.mkdir(parents=True, exist_ok=True)
 
     pdf_paths = download_s3_to_dir(files, in_dir)
+    display_name_map = _build_display_name_map(files, file_names)
     for p in pdf_paths:
         normalize_pdf_inplace(p)
 
@@ -496,6 +553,7 @@ def run_getpdfinfo(files: List[str]) -> Dict[str, Any]:
 
     log("📦 最終JSONを構築中...")
     final_json = build_final_json(all_results, period_mapping)
+    final_json = _replace_display_names_in_result(final_json, display_name_map)
 
     # 互換のためファイルも保存（必要なら）
     out_dir = run_dir / "output" / "json"
