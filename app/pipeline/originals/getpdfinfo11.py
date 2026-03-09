@@ -23,6 +23,7 @@ from typing import Any, Dict, List, Tuple
 import boto3
 from botocore.client import Config
 from pdf2image import convert_from_path
+from zoneinfo import ZoneInfo
 
 # NOTE:
 # This repository contains a local "/app/google" stub package for old Colab helpers.
@@ -60,7 +61,7 @@ MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
 # ログユーティリティ
 # ────────────────────────────────
 def _now_hms() -> str:
-    return datetime.now().strftime("%H:%M:%S")
+    return datetime.now(ZoneInfo("Asia/Tokyo")).strftime("%H:%M:%S")
 
 
 def _format_apimessage(msg: str) -> str:
