@@ -617,7 +617,26 @@ def run_getpdfinfo(files: List[str], file_names: List[str] | None = None) -> Dic
         logs.append({"msg": msg, "type": t})
         apimessages.append(_format_apimessage(msg))
         print(f"[{t.upper()}] {msg}")
+    def _apply_single_file_two_year_labels_rule(result_json: Dict[str, Any]) -> None:
+        """
+        アップロードファイルが1件だけで、そのPDFに年度が2要素ある場合は
+        labels を ["今期", "前期"] に補正する。
+        """
+        results = result_json.get("results", [])
+        if len(results) != 1:
+            return
 
+        item = results[0]
+        years = _normalize_years_field(item.get("年度", []))
+
+        if len(years) != 2:
+            return
+
+        item["labels"] = ["今期", "前期"]
+
+        reason = str(item.get("reason", "") or "").strip()
+        extra = "アップロードファイルが1件のみで、同一PDF内に年度が2要素あるため、labels を『今期』『前期』に補正"
+        item["reason"] = f"{reason} / {extra}" if reason else extra
     for url in files:
         display_name = _s3_display_name_from_url(url)
         try:
@@ -663,7 +682,7 @@ def run_getpdfinfo(files: List[str], file_names: List[str] | None = None) -> Dic
         item["reason"] = str(item.get("reason", "") or "").strip()
 
     _apply_two_file_gap_rule(result_json)
-
+    _apply_single_file_two_year_labels_rule(result_json)
     result_json = _replace_display_names_in_results(result_json, display_name_map)
     display_text = build_display_text(result_json)
     period_mapping = build_period_mapping_from_result(result_json)
