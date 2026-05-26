@@ -168,26 +168,26 @@ def _call_openai_json(client: OpenAI, messages: list, max_tokens: int = 4000) ->
 
             text = response.choices[0].message.content
             if not text:
-                raise ValueError("OpenAI APIレスポンス取得失敗")
+                raise ValueError("AI APIレスポンス取得失敗")
 
             text = _extract_json_text(text)
             data = json.loads(text)
 
             if not isinstance(data, dict):
-                raise ValueError("OpenAIのJSON応答がdictではありません")
+                raise ValueError("AIのJSON応答がdictではありません")
 
             if "results" not in data or not isinstance(data["results"], list):
-                raise ValueError("OpenAIのJSON応答に results がありません")
+                raise ValueError("AIのJSON応答に results がありません")
 
             return data
 
         except Exception as e:
             last_err = e
             wait = 60
-            print(f"[WARN] OpenAI API retry {attempt + 1}/{MAX_RETRIES}, {wait}秒待機: {e}")
+            print(f"[WARN] AI API retry {attempt + 1}/{MAX_RETRIES}, {wait}秒待機: {e}")
             _time.sleep(wait)
 
-    raise RuntimeError(f"OpenAI API {MAX_RETRIES}回失敗: {last_err}")
+    raise RuntimeError(f"AI API {MAX_RETRIES}回失敗: {last_err}")
 
 
 # ────────────────────────────────
@@ -567,7 +567,7 @@ def run_getpdfinfo(files: List[str], file_names: List[str] | None = None) -> Dic
     """
     api_key = str(os.environ.get("OPENAI_API_KEY") or "").strip()
     if not api_key:
-        raise ValueError("OpenAI APIキーが未指定です。環境変数 OPENAI_API_KEY を指定してください。")
+        raise ValueError("AI APIキーが未指定です。環境変数 OPENAI_API_KEY を指定してください。")
 
     client = OpenAI(api_key=api_key)
 
@@ -639,12 +639,12 @@ def run_getpdfinfo(files: List[str], file_names: List[str] | None = None) -> Dic
     ]
 
     log("🚀 解析開始...")
-    log("📨 OpenAIへ全PDFを一括送信します（PDF直接送信モード）")
+    log("📨 AIへ全PDFを一括送信します（PDF直接送信モード）")
 
     try:
         result_json = analyze_multiple_pdfs_with_openai(client, [str(p) for p in pdf_paths], send_file_names)
     except Exception as e:
-        err_msg = f"OpenAI API 呼び出し失敗: {e}"
+        err_msg = f"AI API 呼び出し失敗: {e}"
         log(f"❌ {err_msg}", "error")
         print(f"[ERROR] {err_msg}", flush=True)
         raise RuntimeError(err_msg) from e
