@@ -150,7 +150,7 @@ def _extract_json_text(text: str) -> str:
     return text
 
 
-def _call_openai_json(client: OpenAI, messages: list, max_tokens: int = 4000) -> dict:
+def _call_openai_json(client: OpenAI, messages: list, max_tokens: int = 32768) -> dict:
     import time as _time
 
     MAX_RETRIES = 3
