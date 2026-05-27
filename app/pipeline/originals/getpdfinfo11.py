@@ -1,12 +1,3 @@
-"""
-getpdfinfo11.new.py (Cloud Run / API互換版)
-
-目的:
-- getpdfinfo11.py の run_getpdfinfo() と同じ入出力に寄せる
-- ただし判定ロジックは getpdfinfo11.new.py の「複数PDFを1回でGeminiへ送る」方式を使う
-- apimessage も getpdfinfo11.py と同様に記録する
-- reason を result_json に必ず含める
-"""
 
 from __future__ import annotations
 
@@ -96,6 +87,15 @@ PDF一覧:
 　2枚目PDF（pdf2.pdf）：「前期」
 　3枚目PDF（pdf3.pdf）：「今期」
 
+特別パターンサンプル4（単一ファイル内に複数期の金額列があるケース／TKC書式など）：
+　1枚目PDF（pdf1.pdf）：1つの損益計算書または貸借対照表の表内に
+　　「前期 額」「決算 額（＝当期）」のように複数の金額列が左右に並んでいる
+　　（タイトルには当期の期間だけが記載され、前期列には年度が印字されていないことが多い）
+　の場合
+　1枚目PDF（pdf1.pdf）：「今期」「前期」（＝表内の金額列の数だけ期がある＝この例では2期）
+　※「決算」「当期」「本年」などの列＝今期、「前期」「前年」などの列＝前期 として扱う。
+　※前期列に年度の記載が無くても、当期の1期前（当期の年度−1年）として必ず数えること。
+
 「プロンプトの特別パターンサンプルはあくまで形式を教えるためのものであり、日付などの事実は必ずPDF内の記載から抽出すること」
 
 重要ルール:
@@ -104,7 +104,9 @@ PDF一覧:
 - 販売費及び一般管理費の資料を見ないでください。
 - たな卸資産の資料を見ないでください。
 - 製造原価の資料を見ないでください。
-- ファイル数は1且つ1年度の情報しかないの場合、必ず今期になる。
+- ★重要★ 1つの財務諸表（損益計算書・貸借対照表）の表内に、複数の金額列（例:「前期 額」と「決算 額」、「前年」と「本年」、「当期」と「前期」など）が並んでいる場合は、その金額列の数だけ決算期があるとして必ず数えること。日付が印字されている列の数ではなく、実際の金額列の数で期数を数える。
+- 前期列・前年列に年度（年月）が印字されていなくても、当期（決算・本年）の1期前として必ず「前期」に数えること。年度は当期の年度−1年として補完してよい。
+- ファイル数は1且つ、表内の金額列も本当に1列しかない場合に限り、必ず今期になる。（前期列が別途存在する場合は1年度とみなさないこと）
 - その場合は、そのPDFに含まれる期ラベルをすべて列挙してください。
 - PDF番号とファイル名を取り違えないでください。
 - 出力は必ずJSONのみを返してください。説明文やMarkdownは不要です。
@@ -169,6 +171,9 @@ def _call_openai_json(client: OpenAI, messages: list, max_tokens: int = 32768) -
             text = response.choices[0].message.content
             if not text:
                 raise ValueError("AI APIレスポンス取得失敗")
+
+            # AIから返ってきた生レスポンスをログ出力（Cloud Runログ確認用）
+            print(f"[INFO] 🤖 AIレスポンス(raw, {len(text)}文字): {text}", flush=True)
 
             text = _extract_json_text(text)
             data = json.loads(text)
@@ -605,6 +610,33 @@ def run_getpdfinfo(files: List[str], file_names: List[str] | None = None) -> Dic
         reason = str(item.get("reason", "") or "").strip()
         extra = "アップロードファイルが1件のみで、同一PDF内に年度が2要素あるため、labels を『今期』『前期』に補正"
         item["reason"] = f"{reason} / {extra}" if reason else extra
+
+    def _apply_single_file_three_year_labels_rule(result_json: Dict[str, Any]) -> None:
+        """
+        アップロードファイルが1件だけで、そのPDFに年度が3要素あり、
+        labels が ["前々期の前期", "前々期", "前期"] の場合は
+        labels を ["前々期", "前期", "今期"] に補正する。
+        （AIが「他にもPDFがある」前提で1段古く判定してしまうケースを補正）
+        """
+        results = result_json.get("results", [])
+        if len(results) != 1:
+            return
+
+        item = results[0]
+        years = _normalize_years_field(item.get("年度", []))
+        labels = _normalize_labels_field(item.get("labels", []))
+
+        if len(years) != 3:
+            return
+
+        if labels != ["前々期の前期", "前々期", "前期"]:
+            return
+
+        item["labels"] = ["前々期", "前期", "今期"]
+
+        reason = str(item.get("reason", "") or "").strip()
+        extra = "アップロードファイルが1件のみで、同一PDF内に年度が3要素ありlabels が『前々期の前期/前々期/前期』だったため、labels を『前々期』『前期』『今期』に補正"
+        item["reason"] = f"{reason} / {extra}" if reason else extra
     for url in files:
         display_name = _s3_display_name_from_url(url)
         try:
@@ -657,6 +689,7 @@ def run_getpdfinfo(files: List[str], file_names: List[str] | None = None) -> Dic
 
     _apply_two_file_gap_rule(result_json)
     _apply_single_file_two_year_labels_rule(result_json)
+    _apply_single_file_three_year_labels_rule(result_json)
     result_json = _replace_display_names_in_results(result_json, display_name_map)
     display_text = build_display_text(result_json)
     period_mapping = build_period_mapping_from_result(result_json)
